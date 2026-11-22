@@ -4,6 +4,7 @@ import threading
 from pathlib import Path
 
 from PIL import Image, ImageEnhance, ImageFilter, ImageOps, ImageSequence
+from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import (QComboBox, QDoubleSpinBox, QFileDialog, QHBoxLayout, QLabel, QListWidget,
                                QListWidgetItem, QPushButton, QSpinBox)
 
@@ -55,30 +56,76 @@ def _scale(frame, fit, size, bg):
     return out
 
 
-def load_clip(path, fit, size):
+# Measured on the panel: ~4.21 us per pixel byte, ~107 us per update command (see device.py).
+BYTE_US, CMD_US = 4.21, 107.0
+SMOOTH_FPS = 8           # default target for "Smooth video" (best size/smoothness balance)
+SMOOTH_HEADROOM = 0.8    # use 80% of the link so frames arrive on time
+
+
+def _centered(frame, scale, size):
+    """The frame fitted to the screen, shrunk by `scale`, centered on black."""
+    w, h = size
+    fg = ImageOps.contain(frame, (max(8, int(w * scale)), max(8, int(h * scale))), Image.LANCZOS)
+    out = Image.new("RGB", size, (0, 0, 0))
+    out.paste(fg, ((w - fg.width) // 2, (h - fg.height) // 2))
+    return out
+
+
+def _send_ms(frames):
+    """Average time the panel needs per frame change, from the same 4x4-tile diff the driver uses."""
+    from ..device import TILE, changed_mask, to_rgb565
+    px = [to_rgb565(f) for f in frames]
+    h, w = px[0].shape
+    total = 0.0
+    for a, b in zip(px, px[1:] + px[:1]):
+        tiles = changed_mask(b, a, 1).reshape(h // TILE, TILE, w // TILE, TILE).any(axis=(1, 3))
+        rows = tiles.any(axis=1).sum()
+        total += tiles.sum() * TILE * TILE * 2 * BYTE_US + rows * 1.5 * CMD_US
+    return total / len(px) / 1000
+
+
+def load_clip(path, fit, size, speed=1.0, target_fps=SMOOTH_FPS):
     with Image.open(path) as im:
         first = im.convert("RGB")
         bg = None
         if fit == "fit":  # a still, blurred backdrop: only the GIF area changes, so it plays faster
             bg = ImageOps.fit(first, size, Image.LANCZOS).filter(ImageFilter.GaussianBlur(18))
             bg = ImageEnhance.Brightness(bg).enhance(0.5)
-        frames, durations = [], []
+        raw, durations = [], []
         for i, fr in enumerate(ImageSequence.Iterator(im)):
             if i >= MAX_FRAMES:
                 break
             durations.append(max(20, int(fr.info.get("duration", im.info.get("duration", 100)) or 100)))
-            frames.append(_scale(fr.convert("RGB"), fit, size, bg))
-    return Clip(frames, durations)
+            raw.append(fr.convert("RGB"))
+    if fit != "smooth":
+        return Clip([_scale(f, fit, size, bg) for f in raw], durations)
+
+    # Smooth video: the biggest size whose frame changes the panel can deliver in time.
+    clip_fps = 1000.0 / (sum(durations) / len(durations)) * speed
+    target = min(float(target_fps), clip_fps)
+    budget_ms = 1000.0 / target * SMOOTH_HEADROOM
+    sample = raw[:: max(1, len(raw) // 24)]  # enough frames to judge, quick to compute
+    chosen, est_ms = 0.2, None
+    for scale in (1.0, 0.9, 0.8, 0.7, 0.6, 0.5, 0.45, 0.4, 0.35, 0.3, 0.25, 0.2):
+        ms = _send_ms([_centered(f, scale, size) for f in sample])
+        if ms <= budget_ms:
+            chosen, est_ms = scale, ms
+            break
+        est_ms = ms
+    clip = Clip([_centered(f, chosen, size) for f in raw], durations)
+    clip.info = (f"{int(chosen * 100)}% size · ~{min(clip_fps, 1000.0 / max(est_ms, 1e-3)):.0f} fps "
+                 f"(clip runs at {clip_fps:.0f} fps)")
+    return clip
 
 
 class GifMode(Mode):
     id = "gif"
     name = "GIF"
     icon = "🎞"
-    description = ("Play animated GIFs (also animated WebP/PNG). The screen can take about 220 KB/s, "
-                   "so GIFs where only part of the picture moves play smoothest; "
-                   "full-screen motion plays at a few frames per second.")
-    DEFAULTS = {"paths": [], "fit": "fit", "speed": 1.0, "switch": 30}
+    description = ("Play animated GIFs (also animated WebP/PNG). The screen can only take about 220 KB/s, "
+                   "so full-screen video plays at about 1 fps. \"Smooth video\" measures each GIF and "
+                   "picks the biggest size that still plays fluidly.")
+    DEFAULTS = {"paths": [], "fit": "smooth", "speed": 1.0, "switch": 30, "smooth_fps": 8}
 
     def __init__(self, settings):
         super().__init__(settings)
@@ -103,8 +150,22 @@ class GifMode(Mode):
             return None
         return paths[int(now // max(1, self.cfg["switch"])) % len(paths)]
 
+    def _key(self, path):
+        smooth_speed = (float(self.cfg["speed"]), int(self.cfg["smooth_fps"])) if self.cfg["fit"] == "smooth" else None
+        return (path, self.cfg["fit"], self.size, smooth_speed)
+
+    def smooth_info(self):
+        """What "Smooth video" picked for the current GIF, for the settings panel."""
+        path = self._current(getattr(self, "_last_now", 0))
+        clip = self._clips.get(self._key(path)) if path else None
+        if self.cfg["fit"] != "smooth":
+            return ""
+        if isinstance(clip, Clip):
+            return getattr(clip, "info", "")
+        return "Measuring the best size…" if path else ""
+
     def _clip(self, path):
-        key = (path, self.cfg["fit"], self.size)
+        key = self._key(path)
         with self._lock:
             clip = self._clips.get(key)
             if clip is not None or key in self._loading:
@@ -113,7 +174,7 @@ class GifMode(Mode):
 
         def work():
             try:
-                c = load_clip(path, key[1], key[2])
+                c = load_clip(path, key[1], key[2], float(self.cfg["speed"]), int(self.cfg["smooth_fps"]))
             except Exception as e:
                 c = e
             with self._lock:
@@ -127,7 +188,7 @@ class GifMode(Mode):
 
     def fps(self):
         path = self._current(self._last_now) if hasattr(self, "_last_now") else None
-        clip = self._clips.get((path, self.cfg["fit"], self.size)) if path else None
+        clip = self._clips.get(self._key(path)) if path else None
         if isinstance(clip, Clip):
             return max(1.0, min(60.0, 1000.0 / clip.min_duration * float(self.cfg["speed"])))
         return 4.0
@@ -186,12 +247,27 @@ class GifMode(Mode):
         clear.clicked.connect(lambda: self.set_gifs([]))
 
         fit = QComboBox()
-        fit.addItem("Fit, on blurred background (smoother)", "fit")
-        fit.addItem("Original size, centered (smoothest)", "original")
+        fit.addItem("Smooth video (auto size)", "smooth")
+        fit.addItem("Fit, on blurred background", "fit")
+        fit.addItem("Original size, centered", "original")
         fit.addItem("Fill screen (crop, slowest)", "fill")
         fit.setCurrentIndex(max(0, fit.findData(self.cfg["fit"])))
         fit.currentIndexChanged.connect(lambda: self.set("fit", fit.currentData()))
         form.addRow("Scaling:", fit)
+        smooth = QSpinBox()
+        smooth.setRange(3, 30)
+        smooth.setSuffix(" fps")
+        smooth.setValue(int(self.cfg["smooth_fps"]))
+        smooth.setToolTip("Higher = more fluid but smaller picture; lower = bigger picture but choppier.\n"
+                          "Only used by \"Smooth video\".")
+        smooth.valueChanged.connect(lambda v: self.set("smooth_fps", v))
+        form.addRow("Target smoothness:", smooth)
+        info = QLabel()
+        info.setStyleSheet("color: palette(placeholder-text);")
+        form.addRow("", info)
+        timer = QTimer(w)
+        timer.timeout.connect(lambda: info.setText(self.smooth_info()))
+        timer.start(500)
 
         speed = QDoubleSpinBox()
         speed.setRange(0.25, 4.0)
