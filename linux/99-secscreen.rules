@@ -1,0 +1,3 @@
+# Lets normal users open the 3.5" smart screen and stops ModemManager from probing it.
+# Install:  sudo cp 99-secscreen.rules /etc/udev/rules.d/ && sudo udevadm control --reload && sudo udevadm trigger
+SUBSYSTEM=="tty", ATTRS{idVendor}=="1a86", ATTRS{idProduct}=="5722", MODE="0666", ENV{ID_MM_DEVICE_IGNORE}="1"

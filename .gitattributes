@@ -1,0 +1,10 @@
+* text=auto
+
+# Unix scripts must keep LF line endings to run on macOS / Linux
+*.sh       text eol=lf
+*.command  text eol=lf
+*.rules    text eol=lf
+*.bat      text eol=crlf
+
+*.png binary
+*.gif binary
