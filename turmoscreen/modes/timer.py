@@ -12,8 +12,8 @@ from ..draw import APPLE_ORANGE, W, H, draw_mono, fmt_clock
 from ..fonts import font
 from .base import Mode, panel
 
-BG = (14, 14, 16)
-TRACK = (44, 44, 46)
+BG = (16, 16, 16)
+TRACK = (48, 48, 48)
 FG = (255, 255, 255)
 MUTED = (152, 152, 157)
 RED = (255, 69, 58)

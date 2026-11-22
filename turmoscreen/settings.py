@@ -32,6 +32,7 @@ DEFAULTS = {
     "max_fps": 60,
     "refresh_minutes": 0,
     "skip_invisible": True,
+    "dither": True,
     "picture": {},
     "night": {},
     "modes": {},

@@ -8,8 +8,8 @@ W, H = 480, 320  # logical (landscape) canvas
 
 ORANGE = (217, 119, 87)          # Claude orange
 APPLE_ORANGE = (255, 159, 10)
-BG = (24, 24, 22)
-PANEL = (44, 44, 40)
+BG = (24, 24, 24)        # all flat UI colours are exact RGB565 shades (R,B multiples of 8, G of 4)
+PANEL = (40, 40, 40)
 TEXT = (245, 244, 238)
 MUTED = (165, 162, 154)
 BLUE = (106, 155, 204)
@@ -200,6 +200,37 @@ def app_icon_image(size):
         d.rounded_rectangle((x0, base - (base - top) * h, x0 + bw, base), radius=bw * 0.3, fill=colors[i])
     tile.alpha_composite(layer)
     return tile.resize((size, size), Image.LANCZOS)
+
+
+# ---------------------------------------------------------------- Claude character
+# The little creature from Claude Code's welcome banner, decoded from its block characters
+#   ▐▛███▜▌ / ▝▜█████▛▘ / ▘▘ ▝▝   ->  17 x 5 "pixels", each twice as tall as wide (like half a terminal cell).
+CLAWD_COLOR = (216, 120, 88)  # an exact RGB565 shade
+_CLAWD_BODY = [
+    "   ############  ",
+    "   ##.######.##  ",
+    " ################",
+    "   ############  ",
+]
+_CLAWD_LEGS = ["    # #    # #   ", "   # #    # #    "]  # two walking poses
+CLAWD_COLS, CLAWD_ROWS = 17, 5
+
+
+def draw_clawd(d, x, y, unit, t, working, bg, color=CLAWD_COLOR):
+    """Draw the character with its top-left at (x, y); size 17*unit wide, 10*unit tall.
+    Idle: blinks every few seconds. Working: walks (legs alternate) and glances left and right.
+    Only legs and eyes change between frames, so the animation is cheap to send."""
+    u, v = unit, unit * 2
+    rows = _CLAWD_BODY + [_CLAWD_LEGS[int(t * 4) % 2] if working else _CLAWD_LEGS[0]]
+    for r, line in enumerate(rows):
+        for c, ch in enumerate(line):
+            if ch != " ":
+                d.rectangle((x + c * u, y + r * v, x + (c + 1) * u - 1, y + (r + 1) * v - 1), fill=color)
+    if (t % 3.7) < 0.14:
+        return  # blink: eyes closed
+    glance = (-1, 0, 1, 0)[int(t * 1.5) % 4] if working else 0
+    for c in (5 + glance, 12 + glance):
+        d.rectangle((x + c * u, y + v, x + (c + 1) * u - 1, y + 2 * v - 1), fill=bg)
 
 
 def message_image(title, subtitle="", bg=BG, size=(W, H)):

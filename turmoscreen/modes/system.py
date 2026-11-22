@@ -14,8 +14,8 @@ try:
 except ImportError:  # pragma: no cover
     psutil = None
 
-BG = (12, 12, 14)
-TILE = (30, 30, 33)
+BG = (16, 16, 16)
+TILE = (32, 32, 32)
 FG = (245, 245, 247)
 MUTED = (152, 152, 157)
 COLORS = {"cpu": (255, 159, 10), "mem": (100, 160, 255), "net": (48, 209, 88), "disk": (191, 90, 242)}

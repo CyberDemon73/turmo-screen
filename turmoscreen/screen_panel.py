@@ -78,6 +78,12 @@ class ScreenPanel(QWidget):
             cb.toggled.connect(lambda v, k=key: self._set_picture(k, v))
             self._pic_widgets[key] = cb
             form.addRow("", cb)
+        dither = QCheckBox("Smooth gradients (dithering)")
+        dither.setToolTip("The panel shows 32-64 levels per colour, so smooth gradients can show bands.\n"
+                          "Dithering mixes neighbouring shades in a fine fixed pattern to hide them.")
+        dither.setChecked(bool(self.settings["dither"]))
+        dither.toggled.connect(lambda v: self.settings.__setitem__("dither", v))
+        form.addRow("", dither)
         reset = QPushButton("Reset picture")
         reset.clicked.connect(self._reset_picture)
         form.addRow("", reset)

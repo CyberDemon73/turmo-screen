@@ -267,6 +267,9 @@ class Engine(QObject):
                         self._last_full = t0
                     if on and not self.paused:
                         self.screen.tolerance = 1 if self.settings["skip_invisible"] else 0
+                        if self.screen.dither != bool(self.settings["dither"]):
+                            self.screen.dither = bool(self.settings["dither"])
+                            self.screen.invalidate()  # repaint everything in the new style
                         self.screen.show(img)
                 except (serial.SerialException, OSError) as e:
                     self._close()

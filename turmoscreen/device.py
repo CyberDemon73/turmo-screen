@@ -66,9 +66,30 @@ def auto_port():
     return None
 
 
-def to_rgb565(img):
-    a = np.asarray(img.convert("RGB"), dtype=np.uint16)
-    return ((a[..., 0] & 0xF8) << 8) | ((a[..., 1] & 0xFC) << 3) | (a[..., 2] >> 3)
+# 4x4 Bayer matrix, as fractions in [0, 1): ordered dithering spreads the rounding error of the
+# panel's 5/6/5-bit colour into a fixed fine pattern, so dark gradients don't show bands.
+_BAYER = (np.array([[0, 8, 2, 10], [12, 4, 14, 6], [3, 11, 1, 9], [15, 7, 13, 5]], dtype=np.float32) + 0.5) / 16
+_bayer_cache = {}
+
+
+def _threshold(h, w):
+    if (h, w) not in _bayer_cache:
+        _bayer_cache[(h, w)] = np.tile(_BAYER, (h // 4 + 1, w // 4 + 1))[:h, :w]
+    return _bayer_cache[(h, w)]
+
+
+def to_rgb565(img, dither=False):
+    """RGB888 -> RGB565. With dither, values between two panel shades are mixed in a fixed pattern;
+    colours the panel can show exactly stay exactly the same (no noise on flat areas)."""
+    if not dither:
+        a = np.asarray(img.convert("RGB"), dtype=np.uint16)
+        return ((a[..., 0] & 0xF8) << 8) | ((a[..., 1] & 0xFC) << 3) | (a[..., 2] >> 3)
+    a = np.asarray(img.convert("RGB"), dtype=np.float32)
+    t = _threshold(a.shape[0], a.shape[1])
+    r = np.minimum(np.floor(a[..., 0] / 8 + t), 31).astype(np.uint16)
+    g = np.minimum(np.floor(a[..., 1] / 4 + t), 63).astype(np.uint16)
+    b = np.minimum(np.floor(a[..., 2] / 8 + t), 31).astype(np.uint16)
+    return (r << 11) | (g << 5) | b
 
 
 def changed_mask(px, shadow, tolerance):
@@ -95,8 +116,10 @@ class TuringScreen:
         self.port = port
         self.orientation = orientation
         self.tolerance = 1
+        self.dither = True
         self.ser = None
         self._shadow = None
+        self._last = None
         self.bytes_sent = 0
         self.model = ""
         self._q = None
@@ -226,15 +249,21 @@ class TuringScreen:
 
     def show(self, img):
         """Queue a PIL image of the orientation's logical size, sending only the changed 4x4 tiles."""
-        px = to_rgb565(img)
+        px = to_rgb565(img, self.dither)
         h, w = px.shape
         if (w, h) != logical_size(self.orientation):
             return  # frame rendered for the previous orientation
+        last, self._last = self._last, px
         if self._shadow is None or self._shadow.shape != px.shape:
             self._enqueue(self._region(px, 0, 0, w, h))
             self._shadow = px
             return
         diff = changed_mask(px, self._shadow, self.tolerance)
+        if self.tolerance > 0 and last is not None and last.shape == px.shape:
+            # Small differences are only skipped while that area keeps changing (e.g. GIF noise).
+            # Once it holds still, repaint it exactly, so no slightly-off blocks are left behind.
+            leftover = (px != self._shadow) & ~diff & (px == last)
+            diff |= leftover
         tiles = diff.reshape(h // TILE, TILE, w // TILE, TILE).any(axis=(1, 3))
         chunks = []
         shadow = self._shadow.copy()

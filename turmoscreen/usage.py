@@ -164,6 +164,132 @@ def compute(entries, now):
     return s
 
 
+# ---------------------------------------------------------------- plan limits
+USAGE_URL = "https://api.anthropic.com/api/oauth/usage"
+LIMIT_LABELS = {
+    "five_hour": "5-hour session",
+    "seven_day": "Weekly · all models",
+    "seven_day_opus": "Weekly · Opus",
+    "seven_day_sonnet": "Weekly · Sonnet",
+}
+
+
+@dataclass
+class Limit:
+    key: str
+    label: str
+    percent: float
+    resets_at: float  # epoch seconds, 0 if unknown
+
+
+def _read_oauth():
+    """Claude Code's own login (same source as its /usage screen). Returns (token, expires_epoch) or None."""
+    import subprocess
+    import sys
+    raw = None
+    if sys.platform == "darwin":
+        try:
+            raw = subprocess.run(["security", "find-generic-password", "-s", "Claude Code-credentials", "-w"],
+                                 capture_output=True, text=True, timeout=5).stdout.strip() or None
+        except Exception:
+            raw = None
+    if raw is None:
+        bases = [Path(p) for p in os.environ.get("CLAUDE_CONFIG_DIR", "").split(os.pathsep) if p]
+        bases.append(Path.home() / ".claude")
+        for base in bases:
+            p = base / ".credentials.json"
+            if p.is_file():
+                raw = p.read_text(encoding="utf-8")
+                break
+    if not raw:
+        return None
+    oauth = json.loads(raw).get("claudeAiOauth") or {}
+    token = oauth.get("accessToken")
+    if not token:
+        return None
+    return token, (oauth.get("expiresAt") or 0) / 1000
+
+
+def fetch_limits(timeout=10):
+    """Returns (limits, status). Never stores or logs the token, and never refreshes it."""
+    import urllib.error
+    import urllib.request
+    try:
+        creds = _read_oauth()
+    except Exception:
+        creds = None
+    if creds is None:
+        return [], "Not signed in to Claude Code with a Claude account"
+    token, expires = creds
+    if expires and expires < time.time():
+        return [], "Login expired — open Claude Code once to refresh it"
+    req = urllib.request.Request(USAGE_URL, headers={
+        "Authorization": f"Bearer {token}",
+        "anthropic-beta": "oauth-2025-04-20",
+        "Accept": "application/json",
+        "User-Agent": "turmo-screen",
+    })
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            data = json.loads(r.read().decode("utf-8"))
+    except urllib.error.HTTPError as e:
+        if e.code in (401, 403):
+            return [], "Login not accepted — open Claude Code once to refresh it"
+        return [], f"Usage service error {e.code}"
+    except Exception as e:
+        return [], f"Offline ({type(e).__name__})"
+    limits = []
+    for key, val in data.items():
+        if not isinstance(val, dict) or val.get("utilization") is None:
+            continue
+        resets = _parse_ts(val["resets_at"]) if val.get("resets_at") else None
+        limits.append(Limit(key, LIMIT_LABELS.get(key, key.replace("_", " ").capitalize()),
+                            float(val["utilization"]), resets or 0.0))
+    order = list(LIMIT_LABELS)
+    limits.sort(key=lambda l: order.index(l.key) if l.key in order else len(order))
+    return limits, ("OK" if limits else "No limit data returned")
+
+
+class LimitsWatcher:
+    """Refreshes plan limits in the background every 2 minutes."""
+
+    def __init__(self, interval=120):
+        self.interval = interval
+        self.limits = []
+        self.status = "Not checked yet"
+        self.updated = 0.0
+        self.enabled = True
+        self._thread = None
+        self._wake = threading.Event()
+
+    def start(self):
+        if self._thread is None:
+            self._thread = threading.Thread(target=self._run, name="limits", daemon=True)
+            self._thread.start()
+
+    def refresh_now(self):
+        self._wake.set()
+
+    def get(self, key):
+        for l in self.limits:
+            if l.key == key:
+                return l
+        return None
+
+    def _run(self):
+        while True:
+            if self.enabled:
+                limits, status = fetch_limits()
+                if limits or not self.limits:
+                    self.limits = limits
+                self.status = status
+                self.updated = time.time()
+            else:
+                self.status = "Turned off"
+            self._wake.wait(self.interval)
+            self._wake.clear()
+
+
 class UsageWatcher:
     """Background thread keeping fresh Stats (polls every second)."""
 

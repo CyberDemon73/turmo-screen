@@ -14,9 +14,9 @@ ACCENTS = {
     "green": (48, 209, 88), "purple": (191, 90, 242), "pink": (255, 55, 95),
 }
 THEMES = {
-    "dark": dict(bg=(28, 28, 30), text=(255, 255, 255), muted=(142, 142, 147), sep=(56, 56, 58),
+    "dark": dict(bg=(24, 28, 32), text=(255, 255, 255), muted=(142, 142, 147), sep=(56, 56, 56),
                  ring=(99, 99, 102)),
-    "light": dict(bg=(255, 255, 255), text=(0, 0, 0), muted=(142, 142, 147), sep=(229, 229, 234),
+    "light": dict(bg=(248, 252, 248), text=(0, 0, 0), muted=(142, 142, 147), sep=(232, 228, 232),
                   ring=(199, 199, 204)),
 }
 SS = 2  # supersampling for smooth circles
