@@ -12,6 +12,7 @@ from PySide6.QtWidgets import (QApplication, QCheckBox, QComboBox, QFrame, QHBox
 from . import APP_NAME
 from .device import ORIENTATIONS, find_ports
 from .draw import app_icon_image
+from .icons import icon
 from .engine import pil_to_qimage
 from .modes.gif import is_animated
 from .modes.photo import IMAGE_EXTS
@@ -141,14 +142,14 @@ class MainWindow(QMainWindow):
             "QListWidget::item { padding: 9px 10px; border-radius: 8px; margin: 1px 0; }"
             "QListWidget::item:selected { background: #D97757; color: white; }")
         for m in modes.values():
-            item = QListWidgetItem(f"{m.icon}   {m.name}")
+            item = QListWidgetItem(icon(m.id), m.name)
             item.setData(Qt.ItemDataRole.UserRole, m.id)
             self.sidebar.addItem(item)
         sep = QListWidgetItem("")
         sep.setFlags(Qt.ItemFlag.NoItemFlags)
         sep.setSizeHint(QSize(10, 14))
         self.sidebar.addItem(sep)
-        item = QListWidgetItem("⚙   Screen")
+        item = QListWidgetItem(icon("screen"), "Screen")
         item.setData(Qt.ItemDataRole.UserRole, SCREEN_PAGE)
         self.sidebar.addItem(item)
         lay.addWidget(self.sidebar)
@@ -223,7 +224,7 @@ class MainWindow(QMainWindow):
         self.port_combo.setMinimumWidth(190)
         h.addWidget(self.port_combo)
         refresh = QToolButton()
-        refresh.setText("⟳")
+        refresh.setIcon(icon("refresh", 16))
         refresh.setToolTip("Rescan ports")
         refresh.clicked.connect(self._fill_ports)
         h.addWidget(refresh)
@@ -234,7 +235,10 @@ class MainWindow(QMainWindow):
         h.addWidget(self.connect_btn)
 
         h.addSpacing(10)
-        h.addWidget(QLabel("☀"))
+        sun = QLabel()
+        sun.setPixmap(icon("sun", 18).pixmap(18, 18))
+        sun.setToolTip("Brightness")
+        h.addWidget(sun)
         self.brightness = QSlider(Qt.Orientation.Horizontal)
         self.brightness.setRange(5, 100)
         self.brightness.setFixedWidth(110)
@@ -351,7 +355,7 @@ class MainWindow(QMainWindow):
         menu.addAction(show)
         modes_menu = menu.addMenu("Mode")
         for m in self.modes.values():
-            a = QAction(f"{m.icon}  {m.name}", self)
+            a = QAction(icon(m.id, 16), m.name, self)
             a.triggered.connect(lambda _=False, mid=m.id: self.select_mode(mid))
             modes_menu.addAction(a)
         menu.addSeparator()
