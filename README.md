@@ -14,6 +14,7 @@ for **Windows**, **macOS** and **Linux**.
 ![Linux](https://img.shields.io/badge/Linux-supported-FCC624?logo=linux&logoColor=black)
 ![Python](https://img.shields.io/badge/Python-3.9%2B-3776AB?logo=python&logoColor=white)
 ![Qt](https://img.shields.io/badge/GUI-PySide6%20%2F%20Qt%206-41CD52?logo=qt&logoColor=white)
+![License](https://img.shields.io/badge/License-MIT-blue)
 
 <img src="docs/images/hero.png" alt="SecScreen showing the Claude Code token dashboard and an analog clock" width="100%">
 
@@ -35,6 +36,7 @@ for **Windows**, **macOS** and **Linux**.
 - [Project structure](#project-structure)
 - [Adding your own mode](#adding-your-own-mode)
 - [Troubleshooting](#troubleshooting)
+- [License](#license)
 - [Acknowledgements](#acknowledgements)
 
 ---
@@ -366,6 +368,12 @@ Register it in [`secscreen/modes/__init__.py`](secscreen/modes/__init__.py) by a
 | **Animation is slow** | Expected for full-screen motion — see [Performance](#performance). Use GIF *Fit* or *Original size* scaling. |
 | **Taskbar shows the Python icon** | Unpin and re-pin the app; Windows caches icons. |
 | **No token data** | Claude Code must have run on this computer; check the folder shown in the Claude Tokens panel. |
+
+---
+
+## License
+
+Released under the [MIT License](LICENSE).
 
 ---
 
