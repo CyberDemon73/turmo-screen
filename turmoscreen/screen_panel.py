@@ -111,6 +111,13 @@ class ScreenPanel(QWidget):
         refresh.setToolTip("Resend the whole picture regularly; clears any leftover glitches.")
         form.addRow("Full refresh every:", refresh)
 
+        skip = QCheckBox("Skip invisible colour changes (smoother GIFs)")
+        skip.setToolTip("Ignores ±1-step colour changes the panel can't show (e.g. GIF dithering noise).\n"
+                        "Sends less data, so large animations play up to ~60% faster.")
+        skip.setChecked(bool(self.settings["skip_invisible"]))
+        skip.toggled.connect(lambda v: self.settings.__setitem__("skip_invisible", v))
+        form.addRow("", skip)
+
         self.pause = QCheckBox("Freeze screen (stop sending updates)")
         self.pause.toggled.connect(self.engine.set_paused)
         form.addRow("", self.pause)

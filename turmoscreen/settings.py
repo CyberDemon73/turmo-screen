@@ -31,6 +31,7 @@ DEFAULTS = {
     "tray_hint_shown": False,
     "max_fps": 60,
     "refresh_minutes": 0,
+    "skip_invisible": True,
     "picture": {},
     "night": {},
     "modes": {},

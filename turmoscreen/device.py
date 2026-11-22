@@ -1,20 +1,25 @@
 """Driver for 3.5" Turing-style USB smart screens (revision A protocol, 320x480 panel).
 
 Frames are drawn at the logical size of the chosen orientation (480x320 landscape or
-320x480 portrait) and rotated in software. The panel accepts only ~220 KB/s, so only
-8x8 tiles that changed since the last frame are sent.
+320x480 portrait) and rotated in software. The panel's firmware accepts only ~220 KB/s
+(measured: independent of baud rate, flow control, write size and pixel content), and each
+command costs about as much as 13 pixels. So only 4x4 tiles that visibly changed are sent,
+nearby runs are merged, and a writer thread transmits while the next frame is being drawn.
 
 Protocol rule learned the hard way: the firmware reads each command from its own USB
 packet and drops anything else in that packet, so a command is always a separate write.
 """
+import queue
 import sys
+import threading
 
 import numpy as np
 import serial
 from serial.tools import list_ports
 
 PANEL_W, PANEL_H = 320, 480
-TILE = 8
+TILE = 4
+MERGE_GAP_TILES = 3  # gaps up to 12 px are cheaper to resend than to start a new command
 CHUNK = PANEL_W * 8 * 2  # pixel bytes per write, as in the original working driver
 VID, PID = 0x1A86, 0x5722
 
@@ -66,21 +71,57 @@ def to_rgb565(img):
     return ((a[..., 0] & 0xF8) << 8) | ((a[..., 1] & 0xFC) << 3) | (a[..., 2] >> 3)
 
 
+def changed_mask(px, shadow, tolerance):
+    """Pixels that differ from what the panel shows. tolerance = colour steps (RGB565 units) to ignore:
+    0 = exact; 1 = skip ±1-step changes (dithering noise, invisible on this panel)."""
+    mask = px != shadow
+    if tolerance <= 0 or not mask.any():
+        return mask
+    # only look at pixels that changed at all (usually a small fraction of the frame)
+    a = px[mask].astype(np.int32)
+    b = shadow[mask].astype(np.int32)
+    visible = ((np.abs((a >> 11) - (b >> 11)) > tolerance)
+               | (np.abs(((a >> 5) & 63) - ((b >> 5) & 63)) > 2 * tolerance)
+               | (np.abs((a & 31) - (b & 31)) > tolerance))
+    mask[mask] = visible
+    return mask
+
+
 class TuringScreen:
+    """All serial writes go through one background writer thread, so the next frame can be drawn and
+    compared while the current one is still being transmitted (the panel itself is the bottleneck)."""
+
     def __init__(self, port, orientation="reverse_landscape"):
         self.port = port
         self.orientation = orientation
+        self.tolerance = 1
         self.ser = None
         self._shadow = None
         self.bytes_sent = 0
         self.model = ""
+        self._q = None
+        self._writer = None
+        self._error = None
 
+    # ------------------------------------------------------------ connection
     def open(self):
         self.ser = serial.Serial(self.port, 115200, timeout=1, write_timeout=10, rtscts=True)
         self._shadow = None
         self.model = self.identify()
+        self._error = None
+        self._q = queue.Queue(maxsize=2)  # at most ~1 frame queued ahead of the one being sent
+        self._writer = threading.Thread(target=self._write_loop, name="screen-writer", daemon=True)
+        self._writer.start()
 
     def close(self):
+        if self._q is not None:
+            try:
+                self._q.put(None, timeout=3)  # let queued data finish, then stop
+            except queue.Full:
+                pass
+            if self._writer is not None:
+                self._writer.join(timeout=5)
+        self._q = self._writer = None
         if self.ser is not None:
             try:
                 self.ser.close()
@@ -88,18 +129,47 @@ class TuringScreen:
                 pass
             self.ser = None
 
-    def _cmd(self, cmd, x=0, y=0, ex=0, ey=0):
-        self.ser.write(bytes([
+    def _write_loop(self):
+        while True:
+            item = self._q.get()
+            if item is None:
+                return
+            try:
+                for chunk in item:
+                    self.ser.write(chunk)
+            except Exception as e:  # reported to the engine on its next call
+                self._error = e
+                return
+
+    def _enqueue(self, chunks):
+        if self._error is not None:
+            raise serial.SerialException(f"screen write failed: {self._error}")
+        while True:
+            try:
+                self._q.put(chunks, timeout=0.5)
+                return
+            except queue.Full:
+                if self._error is not None or not self._writer.is_alive():
+                    raise serial.SerialException(f"screen write failed: {self._error}")
+
+    @staticmethod
+    def _packet(cmd, x=0, y=0, ex=0, ey=0):
+        return bytes([
             (x >> 2) & 0xFF,
             (((x & 3) << 6) + (y >> 4)) & 0xFF,
             (((y & 15) << 4) + (ex >> 6)) & 0xFF,
             (((ex & 63) << 2) + (ey >> 8)) & 0xFF,
             ey & 0xFF,
             cmd,
-        ]))
+        ])
+
+    def _cmd(self, cmd, x=0, y=0, ex=0, ey=0):
+        # A command must be its own write: the firmware reads each command from its own USB packet
+        # and drops anything else in that packet.
+        self._enqueue([self._packet(cmd, x, y, ex, ey)])
 
     def identify(self):
-        """Ask the screen what it is (HELLO). Older Turing units don't answer."""
+        """Ask the screen what it is (HELLO). Older Turing units don't answer. Runs before the writer starts."""
         try:
             self.ser.reset_input_buffer()
             self.ser.write(bytes([CMD_HELLO] * 6))
@@ -113,6 +183,7 @@ class TuringScreen:
             return MODELS[reply[0]] + " (rev A)"
         return 'Turing 3.5" (rev A)'
 
+    # ------------------------------------------------------------ commands
     def reboot(self):
         """Restart the screen's firmware; it disconnects from USB for a few seconds."""
         self._cmd(CMD_RESET)
@@ -135,8 +206,9 @@ class TuringScreen:
     def invalidate(self):
         self._shadow = None
 
-    def _send(self, px, x, y, w, h):
-        """Send one logical rectangle mapped onto the panel: command first, then pixels in chunks."""
+    # ------------------------------------------------------------ pixels
+    def _region(self, px, x, y, w, h):
+        """Command + pixel chunks for one logical rectangle, mapped onto the panel."""
         sub = px[y:y + h, x:x + w]
         o = self.orientation
         if o == "landscape":
@@ -147,25 +219,39 @@ class TuringScreen:
             dev, dx, dy, dw, dh = sub[::-1, ::-1], PANEL_W - x - w, PANEL_H - y - h, w, h
         else:  # portrait
             dev, dx, dy, dw, dh = sub, x, y, w, h
-        self._cmd(CMD_DISPLAY_BITMAP, dx, dy, dx + dw - 1, dy + dh - 1)
         data = np.ascontiguousarray(dev).astype("<u2").tobytes()
-        for off in range(0, len(data), CHUNK):
-            self.ser.write(data[off:off + CHUNK])
         self.bytes_sent += len(data) + 6
+        return [self._packet(CMD_DISPLAY_BITMAP, dx, dy, dx + dw - 1, dy + dh - 1)] + \
+               [data[o:o + CHUNK] for o in range(0, len(data), CHUNK)]
 
     def show(self, img):
-        """Send a PIL image of the orientation's logical size, transmitting only changed tiles."""
+        """Queue a PIL image of the orientation's logical size, sending only the changed 4x4 tiles."""
         px = to_rgb565(img)
         h, w = px.shape
         if (w, h) != logical_size(self.orientation):
             return  # frame rendered for the previous orientation
         if self._shadow is None or self._shadow.shape != px.shape:
-            self._send(px, 0, 0, w, h)
-        else:
-            diff = (px != self._shadow).reshape(h // TILE, TILE, w // TILE, TILE).any(axis=(1, 3))
-            for ty in np.nonzero(diff.any(axis=1))[0]:
-                row = np.concatenate(([False], diff[ty], [False]))
-                edges = np.flatnonzero(row[1:] != row[:-1])
-                for s, e in zip(edges[::2], edges[1::2]):
-                    self._send(px, int(s) * TILE, int(ty) * TILE, int(e - s) * TILE, TILE)
-        self._shadow = px
+            self._enqueue(self._region(px, 0, 0, w, h))
+            self._shadow = px
+            return
+        diff = changed_mask(px, self._shadow, self.tolerance)
+        tiles = diff.reshape(h // TILE, TILE, w // TILE, TILE).any(axis=(1, 3))
+        chunks = []
+        shadow = self._shadow.copy()
+        for ty in np.nonzero(tiles.any(axis=1))[0]:
+            row = np.concatenate(([False], tiles[ty], [False]))
+            edges = np.flatnonzero(row[1:] != row[:-1])
+            runs = []
+            for s, e in zip(edges[::2], edges[1::2]):
+                if runs and s - runs[-1][1] <= MERGE_GAP_TILES:  # a command costs ~13 px: bridge small gaps
+                    runs[-1][1] = e
+                else:
+                    runs.append([s, e])
+            y0 = int(ty) * TILE
+            for s, e in runs:
+                x0, x1 = int(s) * TILE, int(e) * TILE
+                chunks += self._region(px, x0, y0, x1 - x0, TILE)
+                shadow[y0:y0 + TILE, x0:x1] = px[y0:y0 + TILE, x0:x1]
+        if chunks:
+            self._enqueue(chunks)
+        self._shadow = shadow  # untouched tiles keep what the panel really shows

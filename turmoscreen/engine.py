@@ -266,6 +266,7 @@ class Engine(QObject):
                         self.screen.invalidate()
                         self._last_full = t0
                     if on and not self.paused:
+                        self.screen.tolerance = 1 if self.settings["skip_invisible"] else 0
                         self.screen.show(img)
                 except (serial.SerialException, OSError) as e:
                     self._close()
