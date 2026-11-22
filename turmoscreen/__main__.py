@@ -1,10 +1,10 @@
-"""Entry point: python -m secscreen"""
+"""Entry point: python -m turmoscreen"""
 import argparse
 import sys
 
 
 def main():
-    parser = argparse.ArgumentParser(prog="secscreen", description="Manager for 3.5\" USB smart screens")
+    parser = argparse.ArgumentParser(prog="turmoscreen", description="Manager for 3.5\" USB smart screens")
     parser.add_argument("--hidden", action="store_true", help="start minimized to the tray")
     parser.add_argument("--render", metavar="DIR", help="render a preview PNG of every mode into DIR and exit")
     args = parser.parse_args()
@@ -19,7 +19,7 @@ def main():
         # and shows the Python logo instead of our icon.
         try:
             import ctypes
-            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("SecScreen.Manager")
+            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("TurmoScreen.App")
         except Exception:
             pass
 

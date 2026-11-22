@@ -1,11 +1,11 @@
-"""Start SecScreen at login: Windows Run key, macOS LaunchAgent, Linux XDG autostart."""
+"""Start Turmo Screen at login: Windows Run key, macOS LaunchAgent, Linux XDG autostart."""
 import os
 import plistlib
 import sys
 from pathlib import Path
 
-NAME = "SecScreen"
-LABEL = "app.secscreen.manager"
+NAME = "TurmoScreen"
+LABEL = "app.turmoscreen.manager"
 
 
 def command():
@@ -15,7 +15,7 @@ def command():
     exe = Path(sys.executable)
     if sys.platform == "win32" and exe.with_name("pythonw.exe").exists():
         exe = exe.with_name("pythonw.exe")  # no console window
-    launcher = Path(__file__).resolve().parent.parent / "secscreen_app.py"
+    launcher = Path(__file__).resolve().parent.parent / "turmoscreen_app.py"
     return [str(exe), str(launcher), "--hidden"]
 
 
@@ -25,7 +25,7 @@ def _mac_plist():
 
 def _linux_desktop():
     base = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config"))
-    return base / "autostart" / "secscreen.desktop"
+    return base / "autostart" / "turmo-screen.desktop"
 
 
 def is_enabled():

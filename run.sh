@@ -1,5 +1,5 @@
 #!/usr/bin/env sh
-# Starts SecScreen on macOS / Linux (creates a local Python environment on first run).
+# Starts Turmo Screen on macOS / Linux (creates a local Python environment on first run).
 set -e
 cd "$(dirname "$0")"
 if [ ! -x .venv/bin/python ]; then
@@ -7,4 +7,4 @@ if [ ! -x .venv/bin/python ]; then
     python3 -m venv .venv
     .venv/bin/python -m pip install --disable-pip-version-check -r requirements.txt
 fi
-exec .venv/bin/python -m secscreen "$@"
+exec .venv/bin/python -m turmoscreen "$@"

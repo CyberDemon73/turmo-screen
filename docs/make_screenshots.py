@@ -15,7 +15,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 OUT = ROOT / "docs" / "images"
-TMP = Path(tempfile.mkdtemp(prefix="secscreen-docs-"))
+TMP = Path(tempfile.mkdtemp(prefix="turmo-screen-docs-"))
 
 from PIL import Image, ImageDraw, ImageFilter  # noqa: E402
 from PySide6.QtCore import Qt, QTimer  # noqa: E402
@@ -24,11 +24,11 @@ from PySide6.QtWidgets import QApplication  # noqa: E402
 app = QApplication(sys.argv)
 app.setStyle("Fusion")
 
-from secscreen.draw import app_icon_image  # noqa: E402
-from secscreen.fonts import font  # noqa: E402
-from secscreen.modes import create_modes  # noqa: E402
-from secscreen.settings import Settings  # noqa: E402
-from secscreen.usage import Stats  # noqa: E402
+from turmoscreen.draw import app_icon_image  # noqa: E402
+from turmoscreen.fonts import font  # noqa: E402
+from turmoscreen.modes import create_modes  # noqa: E402
+from turmoscreen.settings import Settings  # noqa: E402
+from turmoscreen.usage import Stats  # noqa: E402
 
 BASE = datetime(2026, 11, 22, 10, 9, 32).timestamp()  # a nice time for clock hands
 
@@ -88,7 +88,7 @@ def setup_modes():
     st.data["autoconnect"] = False
     modes = create_modes(st)
     modes["tokens"].watcher = FakeWatcher(demo_stats())
-    tasks = ["Reply to client emails", "Ship SecScreen v1.0", "Buy groceries", "Call mom", "Gym at 7pm",
+    tasks = ["Reply to client emails", "Ship Turmo Screen v1.0", "Buy groceries", "Call mom", "Gym at 7pm",
              "Review pull request #42", "Book dentist appointment"]
     modes["tasks"].cfg["tasks"] = [{"id": i, "text": t, "done": i in (1, 3)} for i, t in enumerate(tasks)]
     modes["photo"].cfg["paths"] = [demo_photo()]
@@ -194,7 +194,7 @@ def hero(screen_l, screen_p):
     bg.alpha_composite(glow.filter(ImageFilter.GaussianBlur(90)))
     bg.alpha_composite(app_icon_image(120), (80, 150))
     d = ImageDraw.Draw(bg)
-    d.text((80, 340), "SecScreen", font=font(76, "bold"), fill=(255, 255, 255, 255), anchor="ls")
+    d.text((80, 340), "Turmo Screen", font=font(76, "bold"), fill=(255, 255, 255, 255), anchor="ls")
     for i, line in enumerate(("Turn a 3.5″ USB smart screen into a live", "Claude Code dashboard, clock, to-do list,",
                               "photo frame and more.")):
         d.text((82, 392 + i * 36), line, font=font(26), fill=(200, 196, 210, 255), anchor="ls")
@@ -208,8 +208,8 @@ def hero(screen_l, screen_p):
 
 
 def window_shots(st, modes):
-    from secscreen.engine import Engine
-    from secscreen.gui import MainWindow, SCREEN_PAGE
+    from turmoscreen.engine import Engine
+    from turmoscreen.gui import MainWindow, SCREEN_PAGE
 
     engine = Engine(modes, st)
     win = MainWindow(engine, modes, st)
